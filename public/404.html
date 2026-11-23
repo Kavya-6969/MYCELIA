@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>404 — Page Not Found | MYCELIA</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css">
+  <style>
+    :root {
+      --bg: #0B0F19;
+      --fg: #e4e4e7;
+      --muted: #a1a1aa;
+      --accent: #8B5CF6;
+      --line: #1E293B;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      text-align: center;
+      padding: 1.5rem;
+    }
+    .card {
+      background: #131826;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 3rem 2rem;
+      max-width: 480px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 4rem;
+      margin: 0 0 0.5rem;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: -0.05em;
+    }
+    p {
+      color: var(--muted);
+      margin: 0 0 2rem;
+      font-size: 1.1rem;
+      line-height: 1.5;
+    }
+    a {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 500;
+      transition: opacity 0.15s ease;
+    }
+    a:hover { opacity: 0.9; }
+    a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>404</h1>
+    <p>The page you are looking for does not exist or has been moved.</p>
+    <a href="/">Return to MYCELIA</a>
+  </div>
+</body>
+</html>

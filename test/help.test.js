@@ -1,0 +1,12 @@
+const assert = require('assert'); const H = require('../src/help-core.js');
+const top = q => H.answer(q).topics[0];
+assert.strictEqual(top('how do I connect two nodes?'), 'link'); assert.strictEqual(top('how to link a note with a paper'), 'link');
+assert.strictEqual(top('how can I edit or delete a note'), 'edit'); assert.strictEqual(top('how do I add a paper'), 'add');
+assert.strictEqual(top('agents are not approving, I have to approve manually'), 'approve'); assert.strictEqual(top('the ai says not available'), 'ai');
+assert.strictEqual(top('keyboard shortcuts'), 'keys'); assert.strictEqual(top('how do I export to markdown'), 'export');
+assert.strictEqual(top('what is the weather like'), undefined); assert.strictEqual(H.answer('what is the weather like').intent, 'none');
+assert.strictEqual(H.answer('hi').intent, 'hello');
+const m = H.buildMessages('Why is the sky blue?', [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }]);
+assert.strictEqual(m[0].role, 'system'); assert.ok(/Connect mode/.test(m[0].content) && /any question/.test(m[0].content)); assert.strictEqual(m[m.length - 1].content, 'Why is the sky blue?');
+H.TOPICS.forEach(t => { assert.ok(t.id && t.title && t.kw && t.a, t.id); });
+console.log('help tests passed');

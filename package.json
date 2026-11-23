@@ -1,0 +1,19 @@
+{
+  "name": "researchgraph",
+  "version": "0.5.0",
+  "private": true,
+  "description": "ResearchGraph: offline-first research canvas with agents, what-if experiments, replayable timeline and export",
+  "scripts": {
+    "start": "node server.js",
+    "build": "python3 build.py",
+    "test:api": "node test/api.test.js",
+    "test:agents": "node test/agents.test.js",
+    "test:experiment": "node test/experiment.test.js",
+    "test:export": "node test/export.test.js",
+    "test:sync": "node test/sync.test.js",
+    "test:store": "node --no-warnings test/store.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
