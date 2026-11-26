@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "buildCommand": "cp src/*-core.js public/",
+  "outputDirectory": "public",
+  "installCommand": "echo skip"
+}
