@@ -3,7 +3,7 @@
  * ResearchGraph backend. Zero dependencies (Node 18+).
  *
  *   node server.js                      -> http://localhost:3000, mock AI
- *   GROQ_API_KEY=...   node server.js   -> Groq (llama-3.3-70b-versatile)
+ *   GROQ_API_KEY=...   node server.js   -> Groq (openai/gpt-oss-120b)
  *   OPENAI_API_KEY=... node server.js   -> OpenAI (gpt-4o-mini)
  *
  * POST /api/ingest  (JSON)
@@ -41,16 +41,29 @@ const MAX_FETCH = 8 * 1024 * 1024;          // fetched URL size
 const PUBLIC = path.join(__dirname, 'public');
 
 const providers = [];
-if (process.env.GROQ_API_KEY) providers.push({ name: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', key: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile' });
+if (process.env.GROQ_API_KEY) providers.push({ name: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', key: process.env.GROQ_API_KEY, model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b' });
 if (process.env.OPENAI_API_KEY) providers.push({ name: 'openai', url: (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1') + '/chat/completions', key: process.env.OPENAI_API_KEY, model: process.env.OPENAI_MODEL || 'gpt-4o-mini' });
 
+/* POST to a chat-completions API. If the provider answers 400 (a model that dislikes JSON mode or an extra parameter), retry once with the plain request. Errors carry the provider's own message. */
+async function chatPost(p, body, signal) {
+  const send = b => fetch(p.url, { method: 'POST', signal, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + p.key }, body: JSON.stringify(b) });
+  let res = await send(body);
+  if (res.status === 400 && (body.response_format || body.temperature !== undefined)) {
+    const plain = Object.assign({}, body); delete plain.response_format; delete plain.temperature;
+    res = await send(plain);
+  }
+  if (!res.ok) {
+    let d = ''; try { const j = await res.json(); d = (j.error && j.error.message) || ''; } catch (e) {}
+    throw new Error(p.name + ' returned HTTP ' + res.status + (d ? ': ' + String(d).slice(0, 160) : ''));
+  }
+  return res;
+}
 async function writeWithModel(prompt) {
   let failed = 'no model configured';
   for (const p of providers) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 30000);
     try {
-      const res = await fetch(p.url, { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + p.key }, body: JSON.stringify({ model: p.model, temperature: 0.5, max_tokens: 700, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] }) });
-      if (!res.ok) throw new Error(p.name + ' returned HTTP ' + res.status);
+      const res = await chatPost(p, { model: p.model, temperature: 0.5, max_tokens: 2000, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] }, ctl.signal);
       const j = await res.json(), text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
       if (!text) throw new Error('empty reply');
       return text;
@@ -66,12 +79,7 @@ async function callLlm(p, title, text) {
   const prompt = Core.buildPrompt(title, text);
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 25000);
   try {
-    const res = await fetch(p.url, {
-      method: 'POST', signal: ctl.signal,
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + p.key },
-      body: JSON.stringify({ model: p.model, temperature: 0.2, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] })
-    });
-    if (!res.ok) throw new Error(p.name + ' returned HTTP ' + res.status);
+    const res = await chatPost(p, { model: p.model, temperature: 0.2, max_tokens: 2000, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }] }, ctl.signal);
     const j = await res.json();
     const content = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
     return JSON.parse(content);
@@ -83,8 +91,7 @@ async function askLlm(question, items, history, help) {
   for (const p of providers) {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 25000);
     try {
-      const res = await fetch(p.url, { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + p.key }, body: JSON.stringify({ model: p.model, temperature: 0.2, max_tokens: 500, messages }) });
-      if (!res.ok) throw new Error(p.name + ' returned HTTP ' + res.status);
+      const res = await chatPost(p, { model: p.model, temperature: 0.2, max_tokens: 1500, messages }, ctl.signal);
       const j = await res.json(), text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
       if (!text) throw new Error('empty reply');
       return { text: String(text).trim(), provider: p.name, model: p.model };
@@ -211,54 +218,8 @@ function persistSync(meta) { try { store.save(syncState, meta); } catch (e) { co
 process.on('exit', () => store.close());
 
 /* ---------------- HTTP ---------------- */
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.txt': 'text/plain; charset=utf-8',
-  '.xml': 'application/xml; charset=utf-8'
-};
-
-const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
-function secHeaders(res) {
-  res.setHeader('Content-Security-Policy', CSP);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-DNS-Prefetch-Control', 'off');
-}
-
-const rateLimiter = new Map();
-function checkRate(ip) {
-  const now = Date.now(), windowMs = 60000, maxRequests = 100;
-  let entry = rateLimiter.get(ip);
-  if (!entry || now - entry.start > windowMs) {
-    entry = { start: now, count: 0 };
-    rateLimiter.set(ip, entry);
-  }
-  entry.count++;
-  return entry.count <= maxRequests;
-}
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimiter.entries()) {
-    if (now - entry.start > 60000) rateLimiter.delete(ip);
-  }
-}, 300000).unref();
-
-function send(res, status, obj) {
-  secHeaders(res);
-  const b = JSON.stringify(obj);
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(b);
-}
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json' };
+function send(res, status, obj) { const b = JSON.stringify(obj); res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(b); }
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let n = 0; const chunks = [];
@@ -270,13 +231,6 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
-    const ip = req.socket.remoteAddress || '127.0.0.1';
-    if (url.pathname.startsWith('/api/')) {
-      secHeaders(res);
-      if (!checkRate(ip)) {
-        return send(res, 429, { ok: false, error: 'Too many requests. Please wait a moment.' });
-      }
-    }
     if (url.pathname === '/api/experiments/simulate' && req.method === 'POST') {
       const b = await readBody(req), ctx = { seed: String(b.seed || 'default').slice(0, 120) }, m = Sim.simulate(b.params || {}, ctx);
       const out = { ok: true, metrics: m, curve: Sim.curve(b.params || {}, ctx), warnings: Sim.warnings(m) };
@@ -334,74 +288,25 @@ const server = http.createServer(async (req, res) => {
       return send(res, ok ? 200 : 400, ok ? { ok: true } : { ok: false, error: 'That agent is not retired.' });
     }
     if (url.pathname === '/api/db') return send(res, 200, Object.assign({ ok: true }, store.info()));
-    if (url.pathname === '/api/health' && (req.method === 'GET' || req.method === 'HEAD')) {
-      return send(res, 200, { ok: true, agents: true, sync: true, ask: true, store: store.engine, provider: providers[0] ? providers[0].name : 'mock', model: providers[0] ? providers[0].model : 'heuristic-v1' });
-    }
+    if (url.pathname === '/api/health') return send(res, 200, { ok: true, agents: true, sync: true, ask: true, store: store.engine, provider: providers[0] ? providers[0].name : 'mock', model: providers[0] ? providers[0].model : 'heuristic-v1' });
     if (url.pathname === '/api/ingest') {
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST.' });
       const out = await ingest(await readBody(req));
       return send(res, 200, out);
     }
-    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { ok: false, error: 'Method not allowed.' });
+    if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Method not allowed.' });
     let rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
     const shared = { '/ingest-core.js': 'ingest-core.js', '/agent-core.js': 'agent-core.js', '/experiment-core.js': 'experiment-core.js', '/export-core.js': 'export-core.js', '/sync-core.js': 'sync-core.js', '/ask-core.js': 'ask-core.js', '/help-core.js': 'help-core.js', '/study-core.js': 'study-core.js' }[rel];
     const file = shared ? path.join(__dirname, 'src', shared) : path.join(PUBLIC, rel);
     if (!shared && !file.startsWith(PUBLIC)) return send(res, 403, { ok: false, error: 'Forbidden.' });
     fs.readFile(file, (err, data) => {
-      secHeaders(res);
-      if (err) {
-        const page404 = path.join(PUBLIC, '404.html');
-        return fs.readFile(page404, (e404, d404) => {
-          res.writeHead(404, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-          if (req.method === 'HEAD') return res.end();
-          res.end(d404 || '<!doctype html><title>404</title><h1>404 Not Found</h1>');
-        });
-      }
-      const ext = path.extname(file);
-      const mime = MIME[ext] || 'application/octet-stream';
-      const isImmutable = ['.woff2', '.woff', '.min.js'].some(s => file.includes(s));
-      const cacheControl = isImmutable ? 'public, max-age=31536000, immutable' : (ext === '.html' ? 'no-cache' : 'public, max-age=86400');
-      if (req.method === 'HEAD') {
-        res.writeHead(200, { 'content-type': mime, 'cache-control': cacheControl });
-        return res.end();
-      }
-      const ae = req.headers['accept-encoding'] || '';
-      if (data.length > 1024 && ae.includes('br')) {
-        zlib.brotliCompress(data, (e, c) => {
-          if (e) { res.writeHead(200, { 'content-type': mime, 'cache-control': cacheControl }); return res.end(data); }
-          res.writeHead(200, { 'content-type': mime, 'content-encoding': 'br', 'cache-control': cacheControl });
-          res.end(c);
-        });
-      } else if (data.length > 1024 && ae.includes('gzip')) {
-        zlib.gzip(data, (e, c) => {
-          if (e) { res.writeHead(200, { 'content-type': mime, 'cache-control': cacheControl }); return res.end(data); }
-          res.writeHead(200, { 'content-type': mime, 'content-encoding': 'gzip', 'cache-control': cacheControl });
-          res.end(c);
-        });
-      } else {
-        res.writeHead(200, { 'content-type': mime, 'cache-control': cacheControl });
-        res.end(data);
-      }
+      if (err) return send(res, 404, { ok: false, error: 'Not found.' });
+      res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' }); res.end(data);
     });
   } catch (e) {
     if (!(e instanceof HttpError)) console.error(e);
-    secHeaders(res);
     send(res, e.status || 500, { ok: false, error: e instanceof HttpError ? e.message : 'Ingestion failed. Check the server log.' });
   }
 });
-function shutdown(signal) {
-  console.log('[server] Received ' + signal + ', shutting down gracefully.');
-  server.close(() => {
-    store.close();
-    process.exit(0);
-  });
-  setTimeout(() => {
-    console.error('[server] Forceful termination after timeout');
-    process.exit(1);
-  }, 10000).unref();
-}
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
 if (require.main === module) server.listen(PORT, () => console.log('ResearchGraph on http://localhost:' + PORT + '  AI: ' + (providers[0] ? providers[0].name : 'mock (set GROQ_API_KEY or OPENAI_API_KEY)')));
 module.exports = { server, ingest, engine };
