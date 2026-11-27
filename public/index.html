@@ -1,19 +1,17 @@
 <!--STANDALONE--><!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>[hidden]{display:none!important}</style></head><body><!--/STANDALONE-->
-<title>MYCELIA — Connected. Autonomous. Discovered.</title>
-<link rel="stylesheet" href="/vendor/fonts/fonts.css">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="manifest" href="/site.webmanifest">
-<meta name="description" content="MYCELIA — AI-powered visual research workspace. Collect papers, run autonomous agents, experiment with what-if scenarios, and replay your research history.">
-<meta name="theme-color" content="#0B0F19">
-<meta property="og:type" content="website">
-<meta property="og:title" content="MYCELIA — Connected. Autonomous. Discovered.">
-<meta property="og:description" content="Visual research workspace with AI agents, node graphs, offline sync and replayable timeline.">
-<meta property="og:image" content="/favicon.svg">
-<meta property="og:url" content="https://mycelia.app">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="MYCELIA — Connected. Autonomous. Discovered.">
-<meta name="twitter:description" content="AI-powered visual research workspace with autonomous agents and connected node graph.">
-<meta name="twitter:image" content="/favicon.svg">
+<title>MYCELIA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  if (window.tailwind) tailwind.config = {
+    theme: { extend: { fontFamily: {
+      sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace']
+    } } }
+  };
+</script>
 <style>
   /* Layout: full-bleed app shell. Top toolbar, then library panel | infinite canvas | agent panel. Dark slate/zinc with one indigo accent. */
   :root {
@@ -1437,7 +1435,6 @@ footer .h-mk { width: 26px; height: 20px; }
   <div class="h-wrap">
     <a class="h-brand" href="#hm-top" aria-label="mycelia home"><svg class="h-mk" aria-hidden="true"><use href="#hm-mk"/></svg><span class="h-word">mycelia</span></a>
     <span>Visual research, with agents you can see.</span>
-    <p style="font-size:.8rem;color:rgba(255,255,255,.5);margin-top:8px">Privacy: your data lives in your browser and in the server's local SQLite store. Nothing is sent to third parties without your configured API keys.</p>
   </div>
 </footer>
 </div>
@@ -2375,6 +2372,20 @@ const GENERIC_SUGGEST = ['Review papers on transformers', 'Set up the environmen
 
 /* The engine is the same code in both modes. The server streams its events over SSE; with no server, it runs here. */
 /* The published page can ask Claude through the viewer's `sample` capability. Elsewhere it is null and the Writer says so. */
+/* Cloud AI: on a static host (Vercel) a small function at /api/ai holds the key and answers for the in-browser agents. */
+const cloud = { ok: false, provider: '' };
+const viaApi = () => !!((net.server && net.ai) || cloud.ok);
+async function probeCloud(tries) {
+  if (!/^https?:$/.test(location.protocol)) return false;
+  tries = tries == null ? 3 : tries;
+  for (let i = 0; i < tries && !cloud.ok; i++) {
+    try { const c = new AbortController(), t = setTimeout(() => c.abort(), 12000); const r = await fetch('/api/ai', { cache: 'no-store', signal: c.signal }); clearTimeout(t); const j = await r.json(); cloud.ok = !!(j && j.ok); cloud.provider = (j && j.provider) || ''; if (j && j.provider === 'server') break; }
+    catch (e) { cloud.ok = false; }
+    if (!cloud.ok && i < tries - 1) await new Promise(r => setTimeout(r, 2500));
+  }
+  renderAiChip(); try { renderMode(); } catch (e) {} try { if (state.tab === 'ask') renderAsk(); } catch (e) {}
+  return cloud.ok;
+}
 let sampleFn = null, sampleState = 'none', sampleReady = Promise.resolve();   // sampleState: pending | ready | none
 try {
   if (window.claude && window.claude.use) {
@@ -2385,6 +2396,10 @@ try {
 } catch (e) { sampleState = 'none'; }
 const aiCode = (code, message) => Object.assign(new Error(message), { code });
 async function sampleJson(prompt) {
+  if (!sampleFn && cloud.ok) {
+    const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }) }), j = await r.json();
+    if (j && j.ok && j.text) return j.text; throw aiCode('failed', (j && j.error) || 'The cloud AI did not answer.');
+  }
   await sampleReady;
   if (!sampleFn) throw aiCode('unavailable', 'This view did not give the page access to Claude. Try opening the page in the claude.ai web app.');
   const ctl = new AbortController(); let timer;
@@ -2394,14 +2409,15 @@ async function sampleJson(prompt) {
 }
 function renderAiChip() {
   const c = $('#aiChip'); if (!c) return;
-  const server = net.server && net.ai, kind = server || sampleState === 'ready' ? 'ok' : sampleState === 'pending' ? 'wait' : 'off';
+  const server = viaApi(), kind = server || sampleState === 'ready' ? 'ok' : sampleState === 'pending' ? 'wait' : 'off';
   c.className = 'ai-chip ' + kind;
-  c.textContent = server ? 'AI: server model' : sampleState === 'ready' ? 'AI: Claude ready' : sampleState === 'pending' ? 'AI: checking…' : 'AI: not available';
+  c.textContent = server ? (net.server && net.ai ? 'AI: server model' : 'AI: cloud model') : sampleState === 'ready' ? 'AI: Claude ready' : sampleState === 'pending' ? 'AI: checking…' : 'AI: not available';
   c.title = kind === 'ok' ? 'Click to test the AI with a tiny question' : kind === 'wait' ? 'Waiting for this view to grant Claude access' : 'No AI is reachable here. Goals that need writing will use starter papers instead. Click for details.';
 }
 async function testAi() {
   const c = $('#aiChip'); if (c.dataset.busy) return;
-  if (net.server && net.ai) { toast('The server has an AI model configured. Ask something in the Ask AI tab to use it.'); return; }
+  if (!viaApi() && !sampleFn && sampleState !== 'pending') { c.dataset.busy = '1'; c.textContent = 'AI: checking…'; try { await probeCloud(1); } finally { delete c.dataset.busy; renderAiChip(); } if (cloud.ok) { toast('Cloud AI connected.'); return; } }
+  if (viaApi()) { toast('The server has an AI model configured. Ask something in the Ask AI tab to use it.'); return; }
   if (sampleState === 'pending') { toast('Still checking whether this view allows Claude. Try again in a moment.'); return; }
   if (!sampleFn) { toast('Claude is not available in this view. Open the page in the claude.ai web app, or run the server with GROQ_API_KEY or OPENAI_API_KEY.'); return; }
   c.dataset.busy = '1'; const old = c.textContent; c.textContent = 'AI: testing…';
@@ -2411,14 +2427,31 @@ async function testAi() {
 }
 function startLocalEngine() {
   if (!window.RGAgents) return;
-  localEngine = RGAgents.createEngine({ writer: a => sampleJson(a.prompt), canWrite: () => sampleState !== 'none' });
+  localEngine = RGAgents.createEngine({ writer: a => sampleJson(a.prompt), canWrite: () => sampleState !== 'none' || cloud.ok });
   unsubLocal = localEngine.on(onAgentEvent);
-  agentApi = {
+  agentApi = localApi();
+  applySnapshot(localEngine.snapshot()); engineMode = 'local';
+}
+function localApi() {
+  return {
     submit: (goal, wsId, nodes) => Promise.resolve(localEngine.submitGoal({ goal, wsId, graph: nodes })),
     decide: (id, ok) => Promise.resolve(localEngine.decide(id, ok)),
     reinstate: id => Promise.resolve(localEngine.reinstate(id))
   };
-  applySnapshot(localEngine.snapshot()); engineMode = 'local';
+}
+/* The server went away (stopped, crashed, blocked stream): run the same agents inside this page instead, and keep looking for the server. */
+let probeT = 0;
+function goLocal(why) {
+  if (evSource) { try { evSource.close(); } catch (e) { /* ignore */ } evSource = null; }
+  if (!window.RGAgents) return;
+  if (!localEngine) startLocalEngine(); else { if (unsubLocal) unsubLocal(); unsubLocal = localEngine.on(onAgentEvent); agentApi = localApi(); }
+  const was = engineMode; engineMode = 'local'; renderMode();
+  if (was !== 'local') toast(why || 'The server is not reachable. The agents now run in this page.');
+  scheduleProbe();
+}
+function scheduleProbe() {
+  clearTimeout(probeT); if (!/^https?:$/.test(location.protocol)) return;
+  probeT = setTimeout(async () => { if (engineMode === 'server') return; await probeAgentServer(); if (engineMode !== 'server') scheduleProbe(); }, 15000);
 }
 async function postJson(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -2433,22 +2466,26 @@ async function probeAgentServer() {
     if (!(r.ok && j && j.agents)) return;
     if (localEngine && localEngine.pending().length) return;      // a local run is in progress; keep it
     if (unsubLocal) unsubLocal();
+    if (evSource) { try { evSource.close(); } catch (e) { /* ignore */ } }
+    let dog = 0, opened = false; const arm = () => { if (dog) return; dog = setTimeout(() => { dog = 0; if (!opened) goLocal('The live connection to the server did not work. The agents now run in this page.'); }, 6000); };
     evSource = new EventSource('/api/agents/stream');
     evSource.onmessage = m => { try { onAgentEvent(JSON.parse(m.data)); } catch (e) { /* ignore */ } };
-    evSource.onopen = () => { engineMode = 'server'; renderMode(); };
-    evSource.onerror = () => { engineMode = 'reconnecting'; renderMode(); };
+    evSource.onopen = () => { opened = true; clearTimeout(dog); dog = 0; engineMode = 'server'; renderMode(); };
+    evSource.onerror = () => { opened = false; engineMode = 'reconnecting'; renderMode(); arm(); };
+    const viaServer = (path, body, localCall) => postJson(path, body).catch(() => { goLocal(); return localCall(); });
     agentApi = {
-      submit: (goal, wsId, nodes) => postJson('/api/agents/goal', { goal, wsId, nodes }),
-      decide: (id, ok) => postJson('/api/agents/decision', { proposalId: id, approve: ok }),
-      reinstate: id => postJson('/api/agents/reinstate', { agentId: id })
+      submit: (goal, wsId, nodes) => viaServer('/api/agents/goal', { goal, wsId, nodes }, () => agentApi.submit(goal, wsId, nodes)),
+      decide: (id, ok) => viaServer('/api/agents/decision', { proposalId: id, approve: ok }, () => agentApi.decide(id, ok)),
+      reinstate: id => viaServer('/api/agents/reinstate', { agentId: id }, () => agentApi.reinstate(id))
     };
-    engineMode = 'server'; renderMode();
-  } catch (e) { /* no server: stay local */ }
+    engineMode = 'reconnecting'; renderMode(); arm();
+  } catch (e) { if (engineMode !== 'local') goLocal(); else scheduleProbe(); }
 }
 function renderMode() {
   const el = $('#engineMode'); if (!el) return;
-  el.textContent = engineMode === 'server' ? 'Server' : engineMode === 'reconnecting' ? 'Reconnecting' : 'In browser';
-  el.className = 'mode-chip ' + engineMode; el.title = engineMode === 'server' ? 'Agents run on the MYCELIA server' : engineMode === 'reconnecting' ? 'Lost the server connection. Retrying.' : 'No server found. The same agent engine runs in this page.';
+  const cloudOn = engineMode === 'local' && cloud.ok;
+  el.textContent = engineMode === 'server' ? 'Server' : engineMode === 'reconnecting' ? 'Reconnecting' : cloudOn ? 'Cloud AI' : 'In browser';
+  el.className = 'mode-chip ' + (cloudOn ? 'server' : engineMode); el.title = cloudOn ? 'Agents run in this page and write with the cloud AI model' : engineMode === 'server' ? 'Agents run on the MYCELIA server' : engineMode === 'reconnecting' ? 'Lost the server connection. Retrying.' : 'No server found. The same agent engine runs in this page.';
 }
 function applySnapshot(s) { (s.agents || []).forEach(a => { team[a.id] = a; }); }
 
@@ -2613,6 +2650,7 @@ async function submitGoal(goal) {
 }
 
 startLocalEngine();
+probeCloud();
 
 /* ---------------- Experiments: node card and what-if drawer ---------------- */
 const XP = window.RGExperiment;
@@ -3160,7 +3198,7 @@ $('#emenu').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopP
 
 /* ---------------- Help & Ask AI (answers how-to questions, and anything else when an AI model is connected) ---------------- */
 let helpLog = [], helpBusy = false;
-const helpAi = () => !!((net.server && net.ai) || sampleFn);
+const helpAi = () => !!((viaApi()) || sampleFn);
 function renderHelp(thinking) {
   const el = $('#hlpLog');
   $('#hlpMode').innerHTML = `<i class="${helpAi() ? 'on' : ''}"></i>${helpAi() ? 'AI model connected. Ask me anything.' : 'Built-in help. Connect an AI model to ask anything else.'}`;
@@ -3181,8 +3219,8 @@ async function helpAsk(q) {
   const history = helpLog.map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', text: m.text }));
   helpLog.push({ role: 'user', text: q }); helpBusy = true; $('#hlpIn').value = ''; renderHelp(true);
   let reply = null, why = '';
-  if (!(net.server && net.ai)) { try { await sampleReady; } catch (e) { /* no model */ } }
-  if (!(net.server && net.ai) && sampleFn) {
+  if (!(viaApi())) { try { await sampleReady; } catch (e) { /* no model */ } }
+  if (!(viaApi()) && sampleFn) {
     try {
       const m = RGHelp.buildMessages(q, history), turns = m.filter(x => x.role !== 'system').slice(0, -1).map(x => ({ role: x.role, content: x.content }));
       turns.push({ role: 'user', content: m[0].content + '\n\nQuestion: ' + q });
@@ -3191,7 +3229,7 @@ async function helpAsk(q) {
       if (r && r.text) reply = { text: r.text, label: 'AI model · Claude' };
     } catch (e) { why = (e && e.code === 'not_granted') ? 'not allowed' : 'request failed'; }
   }
-  if (!reply && net.server && net.ai) {
+  if (!reply && viaApi()) {
     const c = new AbortController(), t = setTimeout(() => c.abort(), 30000);
     try {
       const r = await fetch('/api/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ help: true, question: q, history }), signal: c.signal }), j = await r.json();
@@ -3347,7 +3385,7 @@ function askMsgHTML(m) {
 function renderAsk(thinking) {
   const log = askLogs[state.ws] || [], el = $('#askLog');
   $('#askClear').hidden = !log.length;
-  $('#askMode').innerHTML = `<i class="${net.ai || sampleFn ? 'on' : ''}"></i>${net.ai ? 'AI model connected' : sampleFn ? 'Claude connected' : 'Answers from your canvas'}`;
+  $('#askMode').innerHTML = `<i class="${viaApi() || sampleFn ? 'on' : ''}"></i>${viaApi() ? 'AI model connected' : sampleFn ? 'Claude connected' : 'Answers from your canvas'}`;
   if (!log.length && !thinking) { el.innerHTML = es('sparkles', 'Ask your research agent', 'Ask about the papers, datasets, code and experiments in this workspace. Answers cite the nodes they use.', `<div class="es-chips">${ASK_SUGGEST.map(q => `<button type="button" class="chip-s" data-ask="${esc(q)}">${esc(q)}</button>`).join('')}</div>`); return; }
   el.innerHTML = log.map(askMsgHTML).join('') + (thinking ? `<div class="msg bot pending"><div class="av av-ask">${svg('sparkles', 12)}</div><div class="bub"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="tt">Reading ${askItems(cur()).length} nodes…</span></div></div>` : '');
   el.scrollTop = el.scrollHeight;
@@ -3358,7 +3396,7 @@ async function askQuestion(q) {
   const history = log.map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', text: m.text }));
   log.push({ role: 'user', text: q }); askBusy = true; $('#askIn').value = ''; renderAsk(true);
   let reply = null, why = '';
-  if (!(net.server && net.ai) && sampleFn) {
+  if (!(viaApi()) && sampleFn) {
     try {
       const m = RGAsk.buildMessages(q, items, history), turns = m.filter(x => x.role !== 'system').slice(0, -1).map(x => ({ role: x.role, content: x.content }));
       turns.push({ role: 'user', content: m[0].content + '\n\nQuestion: ' + q });
@@ -3367,7 +3405,7 @@ async function askQuestion(q) {
       if (r && r.text) reply = { text: r.text, label: 'AI model · Claude' };
     } catch (e) { why = (e && e.code === 'not_granted') ? 'not allowed' : 'request failed'; }
   }
-  if (!reply && net.server && net.ai) {
+  if (!reply && viaApi()) {
     const c = new AbortController(), t = setTimeout(() => c.abort(), 30000);
     try {
       const r = await fetch('/api/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: q, items, history }), signal: c.signal }), j = await r.json();
@@ -3863,7 +3901,7 @@ if (store.get(DEMO_KEY)) { store.del(DEMO_KEY); setTimeout(() => { if (!rp) { op
 })();
 </script>
 <!--HOME-JS-->
-<script src="/vendor/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function () {
   'use strict';
